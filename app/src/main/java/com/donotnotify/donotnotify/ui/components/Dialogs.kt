@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -48,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -56,6 +58,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.donotnotify.donotnotify.AdvancedRuleConfig
 import com.donotnotify.donotnotify.BlockerRule
+import com.donotnotify.donotnotify.CooldownManager
 import com.donotnotify.donotnotify.MatchType
 import com.donotnotify.donotnotify.R
 import com.donotnotify.donotnotify.RuleType
@@ -100,6 +103,8 @@ fun AdvancedRuleConfigDialog(
     showRuleName: Boolean,
     /** True for DENYLIST/ALLOWLIST rules: shows the notification-proxy toggle. */
     showProxy: Boolean,
+    /** True for DENYLIST/ALLOWLIST rules: shows the cooldown toggle and duration fields. */
+    showCooldown: Boolean,
     /** Non-null (a channel id) shows the "Sound & vibration" deep-link for that channel. */
     soundChannelId: String?,
     onDismiss: () -> Unit,
@@ -108,6 +113,8 @@ fun AdvancedRuleConfigDialog(
     var config by remember { mutableStateOf(initialConfig) }
     var isEnabled by remember { mutableStateOf(initialIsEnabled) }
     var ruleName by remember { mutableStateOf(initialName) }
+    var cooldownInput by remember { mutableStateOf(initialConfig.cooldownSeconds.toString()) }
+    var cooldownUnit by remember { mutableStateOf(CooldownUnit.SECONDS) }
     val scrollState = rememberScrollState()
     val context = LocalContext.current
 
@@ -173,6 +180,67 @@ fun AdvancedRuleConfigDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 40.dp, end = 8.dp, bottom = 4.dp)
                     )
+                }
+
+                if (showCooldown) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
+                    ToggleRow(
+                        checked = config.cooldownEnabled,
+                        label = stringResource(R.string.enable_cooldown),
+                        onToggle = { config = config.copy(cooldownEnabled = it) }
+                    )
+                    Text(
+                        text = stringResource(R.string.cooldown_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 40.dp, end = 8.dp, bottom = 4.dp)
+                    )
+
+                    if (config.cooldownEnabled) {
+                        Column(modifier = Modifier.padding(start = 40.dp, top = 4.dp)) {
+                            TextField(
+                                value = cooldownInput,
+                                onValueChange = { value ->
+                                    cooldownInput = value.filter { it.isDigit() }.take(5)
+                                },
+                                label = { Text(stringResource(R.string.cooldown_value_label)) },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            SingleChoiceSegmentedButtonRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp)
+                            ) {
+                                CooldownUnit.entries.forEachIndexed { index, unit ->
+                                    SegmentedButton(
+                                        selected = cooldownUnit == unit,
+                                        onClick = {
+                                            // Convert the typed value across units so "30"
+                                            // typed as seconds becomes "0.5 min"-safe: keep it
+                                            // lossless in seconds and re-render for the new unit.
+                                            val seconds = parseCooldownInput(cooldownInput, cooldownUnit)
+                                            cooldownUnit = unit
+                                            cooldownInput = displayCooldown(seconds, unit)
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        shape = SegmentedButtonDefaults.itemShape(
+                                            index = index,
+                                            count = CooldownUnit.entries.size
+                                        ),
+                                    ) {
+                                        Text(
+                                            text = stringResource(unit.labelRes),
+                                            maxLines = 1,
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if (showRuleName) {
@@ -261,7 +329,13 @@ fun AdvancedRuleConfigDialog(
                         Text(stringResource(R.string.cancel))
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    Button(onClick = { onSave(config, isEnabled, ruleName) }) {
+                    Button(onClick = {
+                        onSave(
+                            config.copy(cooldownSeconds = parseCooldownInput(cooldownInput, cooldownUnit)),
+                            isEnabled,
+                            ruleName
+                        )
+                    }) {
                         Text(stringResource(R.string.save))
                     }
                 }
@@ -289,6 +363,23 @@ private fun ToggleRow(
         Text(label, modifier = Modifier.weight(1f))
     }
 }
+
+/** Unit selector for the cooldown duration; the stored value is always seconds. */
+private enum class CooldownUnit(val labelRes: Int) {
+    SECONDS(R.string.cooldown_seconds),
+    MINUTES(R.string.cooldown_minutes)
+}
+
+/** Parse the typed input into seconds, clamped to 1 s … 24 h. Empty/garbage reads as 0 → 1. */
+private fun parseCooldownInput(input: String, unit: CooldownUnit): Int {
+    val value = input.toIntOrNull() ?: 0
+    val seconds = if (unit == CooldownUnit.MINUTES) value * 60 else value
+    return seconds.coerceIn(1, CooldownManager.MAX_SECONDS)
+}
+
+/** Render stored seconds in the selected unit (minutes are floored, minimum 1). */
+private fun displayCooldown(seconds: Int, unit: CooldownUnit): String =
+    if (unit == CooldownUnit.MINUTES) ((seconds / 60).coerceAtLeast(1)).toString() else seconds.toString()
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -333,6 +424,7 @@ private fun RuleDialog(
             suggestedName = suggestedName,
             showRuleName = ruleType == RuleType.STACK,
             showProxy = ruleType != RuleType.STACK,
+            showCooldown = ruleType != RuleType.STACK,
             // The channel exists only after the rule is saved, so the deep-link is edit-mode only.
             soundChannelId = if (isEditMode && ruleType == RuleType.STACK &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O

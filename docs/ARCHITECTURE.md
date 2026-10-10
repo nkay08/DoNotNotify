@@ -67,6 +67,8 @@ DoNotNotify/
 │       │   │   ├── RuleMatcher.kt                     # Rule evaluation + pure planNotificationDecision
 │       │   │   ├── StackedNotificationManager.kt      # STACK registry + transactional re-post engine
 │       │   │   ├── ProxyNotificationManager.kt        # PROXY re-post engine (one copy per notification)
+│       │   │   ├── CooldownManager.kt                 # Pure cooldown planning (package-level opt-in)
+│       │   │   ├── CooldownStorage.kt                 # Last-pass timestamps (SharedPreferences)
 │       │   │   ├── BlockerRule.kt                     # Data models (rule, enums, config)
 │       │   │   ├── SimpleNotification.kt              # Notification data model
 │       │   │   ├── RuleStorage.kt                     # Rule persistence (JSON file)
@@ -194,7 +196,9 @@ data class AdvancedRuleConfig(
     val startTimeMinute: Int = 0,
     val endTimeHour: Int = 17,             // Default: 17:00
     val endTimeMinute: Int = 0,
-    val proxyEnabled: Boolean = false      // Re-post allowed notifications as DoNotNotify's own
+    val proxyEnabled: Boolean = false,     // Re-post allowed notifications as DoNotNotify's own
+    val cooldownEnabled: Boolean = false,  // Throttle: block all but the first pass in each window
+    val cooldownSeconds: Int = 300         // Cooldown window; seconds is the single stored unit
 ) : Parcelable
 ```
 
@@ -261,8 +265,13 @@ Notification received (StatusBarNotification)
     │
     ├── Update hitCount on matched rules (matchedRuleIndices)
     │
-    ├── If blocked: cancelNotification(sbn.key)
-    │   └── Logs warning if notification has FLAG_ONGOING_EVENT
+    ├── Cooldown check (only when !blocked && !shouldStack && !wasOngoing):
+    │   ├── CooldownManager.cooldownSecondsFor(rules, package) → window or null
+    │   ├── Within window since last pass (CooldownStorage) → cooldown-blocked
+    │   └── Otherwise → pass and record the current timestamp as the last pass
+    │
+    ├── If blocked (rule block or cooldown-block): cancelNotification(sbn.key)
+    │   └── Logs warning if notification has FLAG_ONGOING_EVENT (rule blocks only)
     │
     ├── Else if shouldProxy: ProxyNotificationManager.post(...)
     │   └── Post-then-cancel — cancelNotification(sbn.key) ONLY if the re-post succeeded
@@ -360,6 +369,17 @@ Key design points:
 - **Channel** — single shared `proxy_notifications` channel ("Proxied notifications"), created idempotently (API 26+)
 - **ContentIntent** — the source notification's own, with a launch-intent-for-source-package fallback
 - **IDs** — from a reserved range starting at 500_000, clear of the STACK registry and HealthCheckWorker
+
+### `CooldownManager` (`CooldownManager.kt`) + `CooldownStorage` (`CooldownStorage.kt`)
+
+**Type:** Pure singleton planner (no Android types) + thin SharedPreferences shell.
+
+Implements notification throttling: only the first unblocked notification from an opted-in package passes; everything inside the window is blocked (canceled, recorded in blocked history, counted in stats). Key design points:
+
+- **Opt-in** — package-level, mirroring proxy: any enabled non-STACK rule for the package with `advancedConfig.cooldownEnabled = true` opts it in; the smallest `cooldownSeconds` wins
+- **Placement** — evaluated only when `!isBlocked && !shouldStack && !wasOngoing`, so precedence is block > stack > cooldown > proxy; blocked notifications never touch cooldown state, stacked/ongoing ones are exempt
+- **State** — `CooldownStorage` keeps one `last_pass_<package>` long per package in SharedPreferences; survives process restarts so a kill cannot re-open the floodgates mid-burst
+- **Window** — measured from the last pass time; `now - lastPass >= window` passes, so the boundary itself lets the next notification through
 
 ---
 
@@ -767,6 +787,10 @@ Full precedence matrix for `planNotificationDecision`: stack-only matching/non-m
 #### `ProxyNotificationManagerTest` (`ProxyNotificationManagerTest.kt`)
 
 Pure `planPost` (title fallback, visibility normalization/redaction, reserved ID range) and the `ProxyPoster` seam: success forwards plan/entry, refusal and thrown exceptions return false.
+
+#### `CooldownManagerTest` (`CooldownManagerTest.kt`)
+
+Pure cooldown planning: opt-in detection (any enabled non-STACK rule, package scoping, STACK/disabled/non-positive excluded), smallest-duration-wins, and `shouldSuppress` window edges (absent record, inside, exact boundary, outside).
 
 #### `StackedNotificationManagerTest` (`StackedNotificationManagerTest.kt`)
 

@@ -35,7 +35,15 @@ data class AdvancedRuleConfig(
      * on): notifications from that app which survive blocking are canceled and re-posted
      * by DoNotNotify itself, so watch-companion apps only ever see our notification.
      */
-    val proxyEnabled: Boolean = false
+    val proxyEnabled: Boolean = false,
+    /**
+     * Package-level cooldown opt-in (any enabled non-STACK rule for the package with this
+     * on): only the first unblocked notification passes; further notifications from that
+     * app are blocked until [cooldownSeconds] have elapsed since the last pass.
+     */
+    val cooldownEnabled: Boolean = false,
+    /** Cooldown window length. Seconds is the single stored unit (UI converts minutes). */
+    val cooldownSeconds: Int = 300
 ) : Parcelable
 
 @Keep

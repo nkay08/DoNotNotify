@@ -24,6 +24,7 @@ class NotificationBlockerService : NotificationListenerService() {
     private lateinit var statsStorage: StatsStorage
     private lateinit var unmonitoredAppsStorage: UnmonitoredAppsStorage
     private lateinit var appInfoStorage: AppInfoStorage
+    private lateinit var cooldownStorage: CooldownStorage
 
     companion object {
         const val ACTION_HISTORY_UPDATED = "com.donotnotify.donotnotify.HISTORY_UPDATED"
@@ -78,6 +79,7 @@ class NotificationBlockerService : NotificationListenerService() {
         statsStorage = StatsStorage(this)
         unmonitoredAppsStorage = UnmonitoredAppsStorage(this)
         appInfoStorage = AppInfoStorage(this)
+        cooldownStorage = CooldownStorage(this)
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -149,12 +151,34 @@ class NotificationBlockerService : NotificationListenerService() {
             Log.i(TAG, "Blocking notification from $packageName because it did not match any allowlist rule.")
         }
 
-        if (isBlocked) {
+        // Cooldown: evaluated only for notifications that survived the rules AND are not being
+        // stacked (grouping already handles chatty apps) and are not ongoing (cancel is
+        // unreliable there). A suppression blocks like a rule; a pass records the timestamp
+        // so the window restarts. Blocked notifications never touch cooldown state.
+        val cooldownSeconds = CooldownManager.cooldownSecondsFor(rules, packageName)
+        val cooldownBlocked = if (cooldownSeconds != null && !isBlocked && !decision.shouldStack && !wasOngoing) {
+            val lastPass = cooldownStorage.lastPassAt(packageName)
+            val suppress = CooldownManager.shouldSuppress(lastPass, cooldownSeconds, currentTime)
+            if (!suppress) {
+                cooldownStorage.recordPass(packageName, currentTime)
+            }
+            suppress
+        } else {
+            false
+        }
+
+        if (cooldownBlocked) {
+            Log.i(TAG, "Cooldown blocking notification from $packageName (${cooldownSeconds}s window)")
+        }
+
+        if (isBlocked || cooldownBlocked) {
             // Cancel immediately on binder thread
-            if (wasOngoing) {
+            if (wasOngoing && isBlocked) {
                 Log.w(TAG, "Attempting to block an ongoing notification. Cancellation may not be possible.")
             }
-            Log.i(TAG, "Blocking notification from $packageName")
+            if (isBlocked) {
+                Log.i(TAG, "Blocking notification from $packageName")
+            }
             cancelNotification(sbn.key)
         } else if (decision.shouldProxy) {
             // PROXY: re-post a copy as our own notification FIRST; only cancel the source if
@@ -241,7 +265,7 @@ class NotificationBlockerService : NotificationListenerService() {
                 }
             }
 
-            if (isBlocked) {
+            if (isBlocked || cooldownBlocked) {
                 recentlyBlocked[notificationKey] = currentTime
             }
 
@@ -249,7 +273,7 @@ class NotificationBlockerService : NotificationListenerService() {
             historyExecutor.execute {
                 try {
                     ruleStorage.incrementHitCounts(hitRuleIds)
-                    if (isBlocked) {
+                    if (isBlocked || cooldownBlocked) {
                         val isNew = blockedNotificationHistoryStorage.saveNotification(simpleNotification)
                         if (isNew) {
                             statsStorage.incrementBlockedNotificationsCount()
