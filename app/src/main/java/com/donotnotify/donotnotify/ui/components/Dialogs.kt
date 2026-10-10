@@ -98,6 +98,8 @@ fun AdvancedRuleConfigDialog(
     suggestedName: String,
     /** True for STACK rules: shows the channel-name field. */
     showRuleName: Boolean,
+    /** True for DENYLIST/ALLOWLIST rules: shows the notification-proxy toggle. */
+    showProxy: Boolean,
     /** Non-null (a channel id) shows the "Sound & vibration" deep-link for that channel. */
     soundChannelId: String?,
     onDismiss: () -> Unit,
@@ -155,6 +157,22 @@ fun AdvancedRuleConfigDialog(
                             }
                         )
                     }
+                }
+
+                if (showProxy) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
+                    ToggleRow(
+                        checked = config.proxyEnabled,
+                        label = stringResource(R.string.enable_proxy),
+                        onToggle = { config = config.copy(proxyEnabled = it) }
+                    )
+                    Text(
+                        text = stringResource(R.string.proxy_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 40.dp, end = 8.dp, bottom = 4.dp)
+                    )
                 }
 
                 if (showRuleName) {
@@ -314,6 +332,7 @@ private fun RuleDialog(
             initialName = ruleName,
             suggestedName = suggestedName,
             showRuleName = ruleType == RuleType.STACK,
+            showProxy = ruleType != RuleType.STACK,
             // The channel exists only after the rule is saved, so the deep-link is edit-mode only.
             soundChannelId = if (isEditMode && ruleType == RuleType.STACK &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O

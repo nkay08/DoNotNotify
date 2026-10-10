@@ -66,6 +66,7 @@ DoNotNotify/
 │       │   │   ├── NotificationBlockerService.kt      # Notification listener service
 │       │   │   ├── RuleMatcher.kt                     # Rule evaluation + pure planNotificationDecision
 │       │   │   ├── StackedNotificationManager.kt      # STACK registry + transactional re-post engine
+│       │   │   ├── ProxyNotificationManager.kt        # PROXY re-post engine (one copy per notification)
 │       │   │   ├── BlockerRule.kt                     # Data models (rule, enums, config)
 │       │   │   ├── SimpleNotification.kt              # Notification data model
 │       │   │   ├── RuleStorage.kt                     # Rule persistence (JSON file)
@@ -178,6 +179,8 @@ data class BlockerRule(
 - `ALLOWLIST` - Allow only notifications that match; block everything else for this package
 - `STACK` - Don't block; cancel the source notification and re-post matching ones as a single native notification group (summary + children). One stack per distinct rule signature. Does not gate like an allowlist; a block always wins over STACK; ongoing notifications are never stacked
 
+A rule of type DENYLIST or ALLOWLIST can additionally enable **notification proxying** (package-level: any enabled non-STACK rule for the package opts the whole package in). Proxied notifications are canceled and re-posted by DoNotNotify itself with the same title/text, so watch-companion apps (e.g. Garmin Connect) can be pointed at DoNotNotify and content-based filtering controls what actually reaches the watch.
+
 ### `AdvancedRuleConfig`
 
 Optional time-windowed scheduling for rules:
@@ -190,7 +193,8 @@ data class AdvancedRuleConfig(
     val startTimeHour: Int = 9,            // Default: 09:00
     val startTimeMinute: Int = 0,
     val endTimeHour: Int = 17,             // Default: 17:00
-    val endTimeMinute: Int = 0
+    val endTimeMinute: Int = 0,
+    val proxyEnabled: Boolean = false      // Re-post allowed notifications as DoNotNotify's own
 ) : Parcelable
 ```
 
@@ -252,12 +256,17 @@ Notification received (StatusBarNotification)
     ├── Load all rules; RuleMatcher.planNotificationDecision(...) resolves precedence:
     │   ├── ALLOWLIST / DENYLIST / STACK each first-match-wins
     │   ├── blocked = (hasAllowlist && !matchesAllowlist) || matchesDenylist
-    │   └── shouldStack = !blocked && matchesStack && !wasOngoing
+    │   ├── shouldStack = !blocked && matchesStack && !wasOngoing
+    │   └── shouldProxy = !blocked && !shouldStack && anyProxyRule && !wasOngoing
     │
     ├── Update hitCount on matched rules (matchedRuleIndices)
     │
     ├── If blocked: cancelNotification(sbn.key)
     │   └── Logs warning if notification has FLAG_ONGOING_EVENT
+    │
+    ├── Else if shouldProxy: ProxyNotificationManager.post(...)
+    │   └── Post-then-cancel — cancelNotification(sbn.key) ONLY if the re-post succeeded
+    │       (proxied items are NOT "blocked": they fall through to normal history)
     │
     ├── Else if shouldStack: StackedNotificationManager.absorbAndPost(...)
     │   └── Post-then-cancel — cancelNotification(sbn.key) ONLY if the re-post succeeded
@@ -321,6 +330,7 @@ Pure (no Android types) precedence resolver used by `NotificationBlockerService`
 
 - First enabled STACK match wins; STACK never sets `hasAllowlistRules`
 - `shouldStack = !isBlocked && matchesStack && !wasOngoing` (a block always wins over STACK; ongoing notifications are excluded)
+- `shouldProxy = !isBlocked && !shouldStack && anyProxyRule && !wasOngoing`, where `anyProxyRule` is true when any enabled non-STACK rule for the package has `advancedConfig.proxyEnabled = true` (package-level opt-in; blocked/stacked notifications are never proxied)
 - Returns `matchedRuleIndices` for `hitCount` increments and `matchedStackRule` (non-null only when `shouldStack`)
 
 Extracted as a pure function so the full precedence matrix is unit-testable on plain JVM (no Robolectric). `RuleMatcher` remains stateless.
@@ -336,6 +346,20 @@ Implements cancel-and-repost: a `NotificationListenerService` cannot group anoth
 - **`StackPoster` seam** — all Android side-effects (post/cancel/enabled/active) behind an interface, so the logic is JVM-testable with an in-memory fake
 - **Caps & lifecycle** — `MAX_CHILDREN_PER_STACK` / `MAX_STACKS` / `STACK_TTL_MS` eviction; `cumulativeCounts` for the true summary count; `reconcileOnConnect` clears orphaned stacks after a process restart
 - **Privacy** — source `visibility` is propagated; PRIVATE/SECRET/unknown get a redacted public version so lock-screen content isn't leaked
+
+### `ProxyNotificationManager` (`ProxyNotificationManager.kt`)
+
+**Type:** Singleton object; re-posts proxied notifications one-to-one (no grouping — that is STACK's job).
+
+Key design points:
+
+- **Purpose** — watch-companion apps forward notifications per app, not per content, and their forwarding races any cancel. By canceling the source and re-posting a copy as DoNotNotify's own, the user points the companion app at DoNotNotify and content filtering actually controls what reaches the watch — no race to lose
+- **`planPost`** (pure) — normalizes source visibility (unknown → PRIVATE), redacts non-PUBLIC for the lock screen, falls back to the app label when the title is blank
+- **`ProxyPoster` seam** — Android side-effects behind an interface, JVM-testable with an in-memory fake; `post()` returns false when the poster refuses or throws so the caller leaves the source untouched
+- **Post-then-cancel** — the service cancels the source only after a successful re-post; a notification is never lost
+- **Channel** — single shared `proxy_notifications` channel ("Proxied notifications"), created idempotently (API 26+)
+- **ContentIntent** — the source notification's own, with a launch-intent-for-source-package fallback
+- **IDs** — from a reserved range starting at 500_000, clear of the STACK registry and HealthCheckWorker
 
 ---
 
@@ -738,7 +762,11 @@ Covers `RuleMatcher.shouldBlock()` / `matches()`: no rules; denylist match/no-ma
 
 #### `NotificationDecisionTest` (`NotificationDecisionTest.kt`)
 
-Full precedence matrix for `planNotificationDecision`: stack-only matching/non-matching, denylist-wins-over-stack, allowlist-gating-wins, first-enabled-stack-match-wins, ongoing exclusion, other-package no-op, disabled stack rule.
+Full precedence matrix for `planNotificationDecision`: stack-only matching/non-matching, denylist-wins-over-stack, allowlist-gating-wins, first-enabled-stack-match-wins, ongoing exclusion, other-package no-op, disabled stack rule; plus the proxy matrix: proxy only when not blocked/stacked/ongoing, block wins, stack wins, package-level flag, STACK-rule flag never fires, disabled/other-package flags ignored.
+
+#### `ProxyNotificationManagerTest` (`ProxyNotificationManagerTest.kt`)
+
+Pure `planPost` (title fallback, visibility normalization/redaction, reserved ID range) and the `ProxyPoster` seam: success forwards plan/entry, refusal and thrown exceptions return false.
 
 #### `StackedNotificationManagerTest` (`StackedNotificationManagerTest.kt`)
 

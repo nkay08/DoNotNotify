@@ -190,6 +190,8 @@
     <string name="advanced_configuration">Advanced Configuration</string>
     <string name="enable_rule">Enable Rule</string>
     <string name="enable_time_limit">Enable Time Limit</string>
+    <string name="enable_proxy">Notification Proxy</string>
+    <string name="proxy_description">Re-post notifications from this app that are not blocked as DoNotNotify\'s own, with the same title and text. Point your watch companion app (e.g. Garmin Connect) at DoNotNotify instead of this app to control exactly what reaches the watch.</string>
     <string name="start_time">Start Time:</string>
     <string name="end_time">End Time:</string>
     <string name="title_filter_optional">Title Filter (Optional)</string>
@@ -298,6 +300,7 @@
     <string name="stack_channel_name_unnamed">Stack rule %1$s</string>
     <string name="rule_name_optional">Rule name (optional)</string>
     <string name="rule_name_supporting">Used as the notification channel name, so you can set its sound and vibration.</string>
+    <string name="proxy_channel_name">Proxied notifications</string>
     <string name="rule_name_use_suggestion">Use “%1$s”</string>
     <string name="rule_sound_vibration">Sound and vibration</string>
     <string name="rule_sound_vibration_desc">Configure in system settings</string>

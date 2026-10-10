@@ -29,7 +29,13 @@ data class AdvancedRuleConfig(
     val startTimeHour: Int = 9,
     val startTimeMinute: Int = 0,
     val endTimeHour: Int = 17,
-    val endTimeMinute: Int = 0
+    val endTimeMinute: Int = 0,
+    /**
+     * Package-level proxy flag (any enabled non-STACK rule for the package with this
+     * on): notifications from that app which survive blocking are canceled and re-posted
+     * by DoNotNotify itself, so watch-companion apps only ever see our notification.
+     */
+    val proxyEnabled: Boolean = false
 ) : Parcelable
 
 @Keep
