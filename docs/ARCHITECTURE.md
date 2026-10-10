@@ -194,7 +194,8 @@ data class AdvancedRuleConfig(
     val endTimeHour: Int = 17,             // Default: 17:00
     val endTimeMinute: Int = 0,
     val cooldownEnabled: Boolean = false,  // Throttle: block all but the first pass in each window
-    val cooldownSeconds: Int = 300         // Cooldown window; seconds is the single stored unit
+    val cooldownSeconds: Int = 300,        // Cooldown window; seconds is the single stored unit
+    val cooldownScope: CooldownScope = CooldownScope.RULE // RULE = matching only, PACKAGE = whole app
 ) : Parcelable
 ```
 
@@ -261,9 +262,9 @@ Notification received (StatusBarNotification)
     ├── Update hitCount on matched rules (matchedRuleIndices)
     │
     ├── Cooldown check (only when !blocked && !shouldStack && !wasOngoing):
-    │   ├── CooldownManager.cooldownSecondsFor(rules, package) → window or null
-    │   ├── Within window since last pass (CooldownStorage) → cooldown-blocked
-    │   └── Otherwise → pass and record the current timestamp as the last pass
+    │   ├── CooldownManager.windowsFor(rules, package, matchedRules) → active windows
+    │   ├── Any window active since its last pass (CooldownStorage) → cooldown-blocked
+    │   └── Otherwise → pass and record the current timestamp for every active window
     │
     ├── If blocked (rule block or cooldown-block): cancelNotification(sbn.key)
     │   └── Logs warning if notification has FLAG_ONGOING_EVENT (rule blocks only)
@@ -350,11 +351,12 @@ Implements cancel-and-repost: a `NotificationListenerService` cannot group anoth
 
 **Type:** Pure singleton planner (no Android types) + thin SharedPreferences shell.
 
-Implements notification throttling: only the first unblocked notification from an opted-in package passes; everything inside the window is blocked (canceled, recorded in blocked history, counted in stats). Key design points:
+Implements notification throttling: notifications inside an active window are blocked (canceled, recorded in blocked history, counted in stats). Key design points:
 
-- **Opt-in** — package-level, mirroring proxy: any enabled non-STACK rule for the package with `advancedConfig.cooldownEnabled = true` opts it in; the smallest `cooldownSeconds` wins
+- **Two scopes** — `PACKAGE` throttles every unblocked notification from an opted-in package; `RULE` (default) throttles only notifications that matched the cooldown rule, leaving everything else from the app untouched. Each matched RULE-scope rule gets an independent window; the notification is suppressed when any window is active
+- **Opt-in** — PACKAGE scope: any enabled non-STACK rule for the package with `cooldownEnabled` and PACKAGE scope (smallest `cooldownSeconds` wins); DENYLIST cooldown rules are always PACKAGE, since a DENYLIST match is blocked anyway and RULE scope could never throttle. RULE scope: enabled ALLOWLIST cooldown rules, matched by the notification
 - **Placement** — evaluated only when `!isBlocked && !shouldStack && !wasOngoing`, so precedence is block > stack > cooldown > proxy; blocked notifications never touch cooldown state, stacked/ongoing ones are exempt
-- **State** — `CooldownStorage` keeps one `last_pass_<package>` long per package in SharedPreferences; survives process restarts so a kill cannot re-open the floodgates mid-burst
+- **State** — `CooldownStorage` keeps one `last_pass_<windowKey>` long per window (`package:<pkg>` or `rule:<ruleId>`) in SharedPreferences; survives process restarts so a kill cannot re-open the floodgates mid-burst. Windows are recorded only when the notification passes, so a suppressed notification never restarts a window
 - **Window** — measured from the last pass time; `now - lastPass >= window` passes, so the boundary itself lets the next notification through
 
 ---
@@ -762,7 +764,7 @@ Full precedence matrix for `planNotificationDecision`: stack-only matching/non-m
 
 #### `CooldownManagerTest` (`CooldownManagerTest.kt`)
 
-Pure cooldown planning: opt-in detection (any enabled non-STACK rule, package scoping, STACK/disabled/non-positive excluded), smallest-duration-wins, and `shouldSuppress` window edges (absent record, inside, exact boundary, outside).
+Pure cooldown planning for both scopes: package opt-in/min-duration/STACK-disabled/non-positive excluded, DENYLIST-always-PACKAGE, RULE-scope windows only for matched ALLOWLIST rules, independent per-rule windows, package+rule coexistence, and `shouldSuppress` window edges (absent record, inside, exact boundary, outside).
 
 #### `StackedNotificationManagerTest` (`StackedNotificationManagerTest.kt`)
 

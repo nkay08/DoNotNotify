@@ -59,6 +59,7 @@ import androidx.core.view.WindowInsetsCompat
 import com.donotnotify.donotnotify.AdvancedRuleConfig
 import com.donotnotify.donotnotify.BlockerRule
 import com.donotnotify.donotnotify.CooldownManager
+import com.donotnotify.donotnotify.CooldownScope
 import com.donotnotify.donotnotify.MatchType
 import com.donotnotify.donotnotify.R
 import com.donotnotify.donotnotify.RuleType
@@ -103,6 +104,8 @@ fun AdvancedRuleConfigDialog(
     showRuleName: Boolean,
     /** True for DENYLIST/ALLOWLIST rules: shows the cooldown toggle and duration fields. */
     showCooldown: Boolean,
+    /** True for ALLOWLIST rules: shows the cooldown scope selector (RULE / PACKAGE). */
+    showCooldownScope: Boolean,
     /** Non-null (a channel id) shows the "Sound & vibration" deep-link for that channel. */
     soundChannelId: String?,
     onDismiss: () -> Unit,
@@ -181,6 +184,43 @@ fun AdvancedRuleConfigDialog(
 
                     if (config.cooldownEnabled) {
                         Column(modifier = Modifier.padding(start = 40.dp, top = 4.dp)) {
+                            if (showCooldownScope) {
+                                SingleChoiceSegmentedButtonRow(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 8.dp)
+                                ) {
+                                    CooldownScopeOption.entries.forEachIndexed { index, option ->
+                                        SegmentedButton(
+                                            selected = config.cooldownScope == option.scope,
+                                            onClick = { config = config.copy(cooldownScope = option.scope) },
+                                            modifier = Modifier.weight(1f),
+                                            shape = SegmentedButtonDefaults.itemShape(
+                                                index = index,
+                                                count = CooldownScopeOption.entries.size
+                                            ),
+                                        ) {
+                                            Text(
+                                                text = stringResource(option.labelRes),
+                                                maxLines = 1,
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                        }
+                                    }
+                                }
+                                Text(
+                                    text = stringResource(
+                                        if (config.cooldownScope == CooldownScope.RULE) {
+                                            R.string.cooldown_scope_rule_desc
+                                        } else {
+                                            R.string.cooldown_scope_package_desc
+                                        }
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
+                            }
                             TextField(
                                 value = cooldownInput,
                                 onValueChange = { value ->
@@ -352,6 +392,15 @@ private enum class CooldownUnit(val labelRes: Int) {
     MINUTES(R.string.cooldown_minutes)
 }
 
+/** Scope selector options; DENYLIST cooldowns are always PACKAGE and show no selector. */
+private enum class CooldownScopeOption(
+    val scope: CooldownScope,
+    val labelRes: Int
+) {
+    RULE(CooldownScope.RULE, R.string.cooldown_scope_rule),
+    PACKAGE(CooldownScope.PACKAGE, R.string.cooldown_scope_package)
+}
+
 /** Parse the typed input into seconds, clamped to 1 s … 24 h. Empty/garbage reads as 0 → 1. */
 private fun parseCooldownInput(input: String, unit: CooldownUnit): Int {
     val value = input.toIntOrNull() ?: 0
@@ -406,6 +455,7 @@ private fun RuleDialog(
             suggestedName = suggestedName,
             showRuleName = ruleType == RuleType.STACK,
             showCooldown = ruleType != RuleType.STACK,
+            showCooldownScope = ruleType == RuleType.ALLOWLIST,
             // The channel exists only after the rule is saved, so the deep-link is edit-mode only.
             soundChannelId = if (isEditMode && ruleType == RuleType.STACK &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O

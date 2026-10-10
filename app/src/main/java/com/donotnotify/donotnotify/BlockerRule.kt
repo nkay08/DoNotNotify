@@ -22,6 +22,17 @@ enum class RuleType {
     STACK
 }
 
+/**
+ * Cooldown throttle scope. PACKAGE throttles every unblocked notification of the app;
+ * RULE throttles only notifications that matched the cooldown rule. DENYLIST cooldowns are
+ * always treated as PACKAGE by [CooldownManager] regardless of the stored value.
+ */
+@Keep
+enum class CooldownScope {
+    PACKAGE,
+    RULE
+}
+
 @Keep
 @Parcelize
 data class AdvancedRuleConfig(
@@ -37,7 +48,9 @@ data class AdvancedRuleConfig(
      */
     val cooldownEnabled: Boolean = false,
     /** Cooldown window length. Seconds is the single stored unit (UI converts minutes). */
-    val cooldownSeconds: Int = 300
+    val cooldownSeconds: Int = 300,
+    /** PACKAGE = throttle the whole app; RULE = throttle only notifications matching the rule. */
+    val cooldownScope: CooldownScope = CooldownScope.RULE
 ) : Parcelable
 
 @Keep

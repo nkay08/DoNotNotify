@@ -2,79 +2,176 @@ package com.donotnotify.donotnotify
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Pure planning for [CooldownManager]. */
 class CooldownManagerTest {
 
-    private fun cooldownRule(seconds: Int = 300, enabled: Boolean = true, type: RuleType = RuleType.ALLOWLIST) =
-        BlockerRule(
-            packageName = "p",
-            ruleType = type,
-            isEnabled = enabled,
-            advancedConfig = AdvancedRuleConfig(cooldownEnabled = true, cooldownSeconds = seconds)
+    private fun allowCooldown(
+        seconds: Int = 300,
+        enabled: Boolean = true,
+        scope: CooldownScope = CooldownScope.RULE
+    ) = BlockerRule(
+        packageName = "p",
+        ruleType = RuleType.ALLOWLIST,
+        isEnabled = enabled,
+        advancedConfig = AdvancedRuleConfig(
+            cooldownEnabled = true,
+            cooldownSeconds = seconds,
+            cooldownScope = scope
         )
+    )
 
-    // ---- cooldownSecondsFor -----------------------------------------------------
+    private fun denyCooldown(seconds: Int = 300, enabled: Boolean = true) = BlockerRule(
+        packageName = "p",
+        ruleType = RuleType.DENYLIST,
+        isEnabled = enabled,
+        advancedConfig = AdvancedRuleConfig(cooldownEnabled = true, cooldownSeconds = seconds)
+    )
+
+    // ---- windowsFor: package scope ----------------------------------------------
 
     @Test
-    fun `no cooldown rules - null`() {
-        assertNull(CooldownManager.cooldownSecondsFor(emptyList(), "p"))
-        assertNull(
-            CooldownManager.cooldownSecondsFor(
+    fun `no cooldown rules - no windows`() {
+        assertTrue(CooldownManager.windowsFor(emptyList(), "p", emptyList()).isEmpty())
+        assertTrue(
+            CooldownManager.windowsFor(
                 listOf(BlockerRule(packageName = "p", ruleType = RuleType.ALLOWLIST)),
-                "p"
-            )
+                "p",
+                emptyList()
+            ).isEmpty()
         )
     }
 
     @Test
-    fun `opted in by any enabled non-stack rule for the package`() {
+    fun `package-scope rule opts the whole package in`() {
+        val rules = listOf(allowCooldown(scope = CooldownScope.PACKAGE, seconds = 120))
+        val windows = CooldownManager.windowsFor(rules, "p", emptyList())
+        assertEquals(listOf(CooldownManager.CooldownWindow("package:p", 120)), windows)
+    }
+
+    @Test
+    fun `package scope - smallest duration wins`() {
         val rules = listOf(
-            BlockerRule(packageName = "p", ruleType = RuleType.DENYLIST),
-            cooldownRule(seconds = 120)
+            allowCooldown(scope = CooldownScope.PACKAGE, seconds = 300),
+            allowCooldown(scope = CooldownScope.PACKAGE, seconds = 15)
         )
-        assertEquals(120, CooldownManager.cooldownSecondsFor(rules, "p"))
+        assertEquals(
+            listOf(CooldownManager.CooldownWindow("package:p", 15)),
+            CooldownManager.windowsFor(rules, "p", emptyList())
+        )
+    }
+
+    @Test
+    fun `denylist cooldown is always package scope`() {
+        val rules = listOf(denyCooldown(seconds = 45))
+        assertEquals(
+            listOf(CooldownManager.CooldownWindow("package:p", 45)),
+            CooldownManager.windowsFor(rules, "p", emptyList())
+        )
     }
 
     @Test
     fun `stack rule with cooldown flag is ignored`() {
-        val rules = listOf(cooldownRule(seconds = 120, type = RuleType.STACK))
-        assertNull(CooldownManager.cooldownSecondsFor(rules, "p"))
+        val stackWithCooldown = BlockerRule(
+            packageName = "p",
+            ruleType = RuleType.STACK,
+            advancedConfig = AdvancedRuleConfig(cooldownEnabled = true, cooldownSeconds = 120)
+        )
+        assertTrue(CooldownManager.windowsFor(listOf(stackWithCooldown), "p", emptyList()).isEmpty())
     }
 
     @Test
     fun `disabled cooldown rule ignored`() {
-        assertNull(CooldownManager.cooldownSecondsFor(listOf(cooldownRule(enabled = false)), "p"))
+        assertTrue(
+            CooldownManager.windowsFor(listOf(allowCooldown(enabled = false)), "p", emptyList()).isEmpty()
+        )
     }
 
     @Test
     fun `other package ignored`() {
-        val rules = listOf(cooldownRule(seconds = 120).copy(packageName = "other"))
-        assertNull(CooldownManager.cooldownSecondsFor(rules, "p"))
-    }
-
-    @Test
-    fun `smallest duration wins`() {
-        val rules = listOf(
-            cooldownRule(seconds = 300),
-            cooldownRule(seconds = 15)
-        )
-        assertEquals(15, CooldownManager.cooldownSecondsFor(rules, "p"))
+        val rules = listOf(allowCooldown(scope = CooldownScope.PACKAGE).copy(packageName = "other"))
+        assertTrue(CooldownManager.windowsFor(rules, "p", emptyList()).isEmpty())
     }
 
     @Test
     fun `non-positive durations ignored`() {
-        assertEquals(
-            60,
-            CooldownManager.cooldownSecondsFor(
-                listOf(cooldownRule(seconds = 0), cooldownRule(seconds = -5), cooldownRule(seconds = 60)),
-                "p"
-            )
+        val rules = listOf(
+            allowCooldown(scope = CooldownScope.PACKAGE, seconds = 0),
+            allowCooldown(scope = CooldownScope.PACKAGE, seconds = 60)
         )
-        assertNull(CooldownManager.cooldownSecondsFor(listOf(cooldownRule(seconds = 0)), "p"))
+        assertEquals(
+            listOf(CooldownManager.CooldownWindow("package:p", 60)),
+            CooldownManager.windowsFor(rules, "p", emptyList())
+        )
+        assertTrue(
+            CooldownManager.windowsFor(
+                listOf(allowCooldown(scope = CooldownScope.PACKAGE, seconds = 0)),
+                "p",
+                emptyList()
+            ).isEmpty()
+        )
+    }
+
+    // ---- windowsFor: rule scope --------------------------------------------------
+
+    @Test
+    fun `rule-scope window only for matched rules`() {
+        val rule = allowCooldown(seconds = 90)
+        assertEquals(
+            listOf(CooldownManager.CooldownWindow("rule:${rule.id}", 90)),
+            CooldownManager.windowsFor(listOf(rule), "p", listOf(rule))
+        )
+        // Same rule, notification did not match it: no window.
+        assertTrue(CooldownManager.windowsFor(listOf(rule), "p", emptyList()).isEmpty())
+    }
+
+    @Test
+    fun `unmatched rule-scope rule does not suppress anything`() {
+        val rule = allowCooldown(seconds = 90)
+        val otherMatched = BlockerRule(packageName = "p", ruleType = RuleType.ALLOWLIST)
+        assertTrue(CooldownManager.windowsFor(listOf(rule), "p", listOf(otherMatched)).isEmpty())
+    }
+
+    @Test
+    fun `multiple matched rule-scope rules - independent windows`() {
+        val a = allowCooldown(seconds = 30)
+        val b = allowCooldown(seconds = 120)
+        val windows = CooldownManager.windowsFor(listOf(a, b), "p", listOf(a, b))
+        assertEquals(
+            listOf(
+                CooldownManager.CooldownWindow("rule:${a.id}", 30),
+                CooldownManager.CooldownWindow("rule:${b.id}", 120)
+            ),
+            windows
+        )
+    }
+
+    @Test
+    fun `package and matched rule windows coexist`() {
+        val packageRule = allowCooldown(scope = CooldownScope.PACKAGE, seconds = 60)
+        val matchedRule = allowCooldown(seconds = 15)
+        val windows = CooldownManager.windowsFor(
+            listOf(packageRule, matchedRule),
+            "p",
+            listOf(matchedRule)
+        )
+        assertEquals(
+            listOf(
+                CooldownManager.CooldownWindow("package:p", 60),
+                CooldownManager.CooldownWindow("rule:${matchedRule.id}", 15)
+            ),
+            windows
+        )
+    }
+
+    @Test
+    fun `matched denylist rule never yields a rule window`() {
+        val rule = denyCooldown(seconds = 30)
+        // A matched DENYLIST rule means the notification is blocked by the rules; the caller
+        // guards this, but windowsFor must not produce a rule window even if misused.
+        assertTrue(CooldownManager.windowsFor(listOf(rule), "p", listOf(rule)).all { it.key.startsWith("package:") })
     }
 
     // ---- shouldSuppress ---------------------------------------------------------
