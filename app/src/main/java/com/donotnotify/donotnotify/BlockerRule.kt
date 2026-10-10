@@ -29,7 +29,15 @@ data class AdvancedRuleConfig(
     val startTimeHour: Int = 9,
     val startTimeMinute: Int = 0,
     val endTimeHour: Int = 17,
-    val endTimeMinute: Int = 0
+    val endTimeMinute: Int = 0,
+    /**
+     * Package-level cooldown opt-in (any enabled non-STACK rule for the package with this
+     * on): only the first unblocked notification passes; further notifications from that
+     * app are blocked until [cooldownSeconds] have elapsed since the last pass.
+     */
+    val cooldownEnabled: Boolean = false,
+    /** Cooldown window length. Seconds is the single stored unit (UI converts minutes). */
+    val cooldownSeconds: Int = 300
 ) : Parcelable
 
 @Keep

@@ -66,6 +66,8 @@ DoNotNotify/
 │       │   │   ├── NotificationBlockerService.kt      # Notification listener service
 │       │   │   ├── RuleMatcher.kt                     # Rule evaluation + pure planNotificationDecision
 │       │   │   ├── StackedNotificationManager.kt      # STACK registry + transactional re-post engine
+│       │   │   ├── CooldownManager.kt                 # Pure cooldown planning (package-level opt-in)
+│       │   │   ├── CooldownStorage.kt                 # Last-pass timestamps (SharedPreferences)
 │       │   │   ├── BlockerRule.kt                     # Data models (rule, enums, config)
 │       │   │   ├── SimpleNotification.kt              # Notification data model
 │       │   │   ├── RuleStorage.kt                     # Rule persistence (JSON file)
@@ -190,7 +192,9 @@ data class AdvancedRuleConfig(
     val startTimeHour: Int = 9,            // Default: 09:00
     val startTimeMinute: Int = 0,
     val endTimeHour: Int = 17,             // Default: 17:00
-    val endTimeMinute: Int = 0
+    val endTimeMinute: Int = 0,
+    val cooldownEnabled: Boolean = false,  // Throttle: block all but the first pass in each window
+    val cooldownSeconds: Int = 300         // Cooldown window; seconds is the single stored unit
 ) : Parcelable
 ```
 
@@ -256,8 +260,13 @@ Notification received (StatusBarNotification)
     │
     ├── Update hitCount on matched rules (matchedRuleIndices)
     │
-    ├── If blocked: cancelNotification(sbn.key)
-    │   └── Logs warning if notification has FLAG_ONGOING_EVENT
+    ├── Cooldown check (only when !blocked && !shouldStack && !wasOngoing):
+    │   ├── CooldownManager.cooldownSecondsFor(rules, package) → window or null
+    │   ├── Within window since last pass (CooldownStorage) → cooldown-blocked
+    │   └── Otherwise → pass and record the current timestamp as the last pass
+    │
+    ├── If blocked (rule block or cooldown-block): cancelNotification(sbn.key)
+    │   └── Logs warning if notification has FLAG_ONGOING_EVENT (rule blocks only)
     │
     ├── Else if shouldStack: StackedNotificationManager.absorbAndPost(...)
     │   └── Post-then-cancel — cancelNotification(sbn.key) ONLY if the re-post succeeded
@@ -336,6 +345,17 @@ Implements cancel-and-repost: a `NotificationListenerService` cannot group anoth
 - **`StackPoster` seam** — all Android side-effects (post/cancel/enabled/active) behind an interface, so the logic is JVM-testable with an in-memory fake
 - **Caps & lifecycle** — `MAX_CHILDREN_PER_STACK` / `MAX_STACKS` / `STACK_TTL_MS` eviction; `cumulativeCounts` for the true summary count; `reconcileOnConnect` clears orphaned stacks after a process restart
 - **Privacy** — source `visibility` is propagated; PRIVATE/SECRET/unknown get a redacted public version so lock-screen content isn't leaked
+
+### `CooldownManager` (`CooldownManager.kt`) + `CooldownStorage` (`CooldownStorage.kt`)
+
+**Type:** Pure singleton planner (no Android types) + thin SharedPreferences shell.
+
+Implements notification throttling: only the first unblocked notification from an opted-in package passes; everything inside the window is blocked (canceled, recorded in blocked history, counted in stats). Key design points:
+
+- **Opt-in** — package-level, mirroring proxy: any enabled non-STACK rule for the package with `advancedConfig.cooldownEnabled = true` opts it in; the smallest `cooldownSeconds` wins
+- **Placement** — evaluated only when `!isBlocked && !shouldStack && !wasOngoing`, so precedence is block > stack > cooldown > proxy; blocked notifications never touch cooldown state, stacked/ongoing ones are exempt
+- **State** — `CooldownStorage` keeps one `last_pass_<package>` long per package in SharedPreferences; survives process restarts so a kill cannot re-open the floodgates mid-burst
+- **Window** — measured from the last pass time; `now - lastPass >= window` passes, so the boundary itself lets the next notification through
 
 ---
 
@@ -739,6 +759,10 @@ Covers `RuleMatcher.shouldBlock()` / `matches()`: no rules; denylist match/no-ma
 #### `NotificationDecisionTest` (`NotificationDecisionTest.kt`)
 
 Full precedence matrix for `planNotificationDecision`: stack-only matching/non-matching, denylist-wins-over-stack, allowlist-gating-wins, first-enabled-stack-match-wins, ongoing exclusion, other-package no-op, disabled stack rule.
+
+#### `CooldownManagerTest` (`CooldownManagerTest.kt`)
+
+Pure cooldown planning: opt-in detection (any enabled non-STACK rule, package scoping, STACK/disabled/non-positive excluded), smallest-duration-wins, and `shouldSuppress` window edges (absent record, inside, exact boundary, outside).
 
 #### `StackedNotificationManagerTest` (`StackedNotificationManagerTest.kt`)
 
