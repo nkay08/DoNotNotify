@@ -35,7 +35,13 @@ data class AdvancedRuleConfig(
      * on): notifications from that app which survive blocking are canceled and re-posted
      * by DoNotNotify itself, so watch-companion apps only ever see our notification.
      */
-    val proxyEnabled: Boolean = false
+    val proxyEnabled: Boolean = false,
+    /**
+     * Phone-silent proxying (any enabled non-STACK proxy rule for the package with this
+     * on): re-posted notifications are posted with setSilent(true), so the phone neither
+     * sounds nor vibrates while watch-companion apps still forward the content.
+     */
+    val proxySilent: Boolean = false
 ) : Parcelable
 
 @Keep
