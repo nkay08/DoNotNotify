@@ -46,7 +46,8 @@ object ProxyNotificationManager {
         val contentIntent: PendingIntent?,
         val sourceVisibility: Int,
         val packageName: String,
-        val appLabel: String
+        val appLabel: String,
+        val silent: Boolean = false
     )
 
     /** Immutable plan produced by the pure [planPost]. No Android calls. */
@@ -133,6 +134,19 @@ object ProxyNotificationManager {
                 .setVisibility(plan.visibility)
                 .setContentIntent(entry.contentIntent ?: sourceLaunchIntent(entry.packageName, plan.notificationId))
             largeIcon?.let { builder.setLargeIcon(it) }
+            if (entry.silent) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    // Channel-independent silence: no sound, no vibration, regardless of
+                    // the channel's settings (some OEM builds do not honour the per-channel
+                    // vibration toggle reliably).
+                    builder.setSilent(true)
+                } else {
+                    // Pre-channels: clear every alerting default explicitly.
+                    builder.setDefaults(0)
+                        .setSound(null)
+                        .setVibrate(longArrayOf())
+                }
+            }
             if (plan.redactPublic) {
                 builder.setPublicVersion(redactedPublic(entry))
             }

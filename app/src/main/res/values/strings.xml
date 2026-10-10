@@ -192,6 +192,8 @@
     <string name="enable_time_limit">Enable Time Limit</string>
     <string name="enable_proxy">Notification Proxy</string>
     <string name="proxy_description">Re-post notifications from this app that are not blocked as DoNotNotify\'s own, with the same title and text. Point your watch companion app (e.g. Garmin Connect) at DoNotNotify instead of this app to control exactly what reaches the watch.</string>
+    <string name="enable_proxy_silent">Silent on phone</string>
+    <string name="proxy_silent_description">Re-posted notifications make no sound and do not vibrate on the phone. Watch companion apps still forward them, so the watch alerts while the phone stays quiet.</string>
     <string name="enable_cooldown">Cooldown</string>
     <string name="cooldown_description">Only the first unblocked notification passes; further notifications are blocked until the cooldown ends.</string>
     <string name="cooldown_value_label">Cooldown length</string>

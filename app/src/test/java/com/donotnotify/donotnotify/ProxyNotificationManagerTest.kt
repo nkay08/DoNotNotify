@@ -124,4 +124,13 @@ class ProxyNotificationManagerTest {
         assertEquals("com.example", poster.lastEntry?.packageName)
         assertNull(poster.lastEntry?.contentIntent)
     }
+
+    @Test
+    fun `post forwards the silent flag`() {
+        val poster = FakePoster()
+        ProxyNotificationManager.post(poster, entry().copy(silent = true), null)
+        assertEquals(true, poster.lastEntry?.silent)
+        ProxyNotificationManager.post(poster, entry(), null)
+        assertEquals(false, poster.lastEntry?.silent)
+    }
 }

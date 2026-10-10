@@ -183,6 +183,22 @@ fun AdvancedRuleConfigDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 40.dp, end = 8.dp, bottom = 4.dp)
                     )
+
+                    if (config.proxyEnabled) {
+                        Column(modifier = Modifier.padding(start = 40.dp, top = 4.dp)) {
+                            ToggleRow(
+                                checked = config.proxySilent,
+                                label = stringResource(R.string.enable_proxy_silent),
+                                onToggle = { config = config.copy(proxySilent = it) }
+                            )
+                            Text(
+                                text = stringResource(R.string.proxy_silent_description),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 40.dp, end = 8.dp, bottom = 4.dp)
+                            )
+                        }
+                    }
                 }
 
                 if (showCooldown) {

@@ -142,6 +142,7 @@ object RuleMatcher {
         var matchesStack = false
         var matchedStackRule: BlockerRule? = null
         var anyProxyRule = false
+        var anyProxySilent = false
         val matchedRuleIndices = mutableListOf<Int>()
 
         for ((index, rule) in rules.withIndex()) {
@@ -151,6 +152,9 @@ object RuleMatcher {
             // never fire after the STACK branch already re-posted the notification.
             if (rule.ruleType != RuleType.STACK && rule.advancedConfig?.proxyEnabled == true) {
                 anyProxyRule = true
+                if (rule.advancedConfig?.proxySilent == true) {
+                    anyProxySilent = true
+                }
             }
             when (rule.ruleType) {
                 RuleType.ALLOWLIST -> {
@@ -187,6 +191,7 @@ object RuleMatcher {
             // Only meaningful when the notification will actually be stacked.
             matchedStackRule = if (shouldStack) matchedStackRule else null,
             shouldProxy = shouldProxy,
+            proxySilent = shouldProxy && anyProxySilent,
             matchedRuleIndices = matchedRuleIndices
         )
     }
@@ -201,6 +206,8 @@ object RuleMatcher {
  * @param shouldProxy true when the notification survives blocking and stacking and any
  *   enabled non-STACK rule for the package has the proxy flag: the service then cancels
  *   the source and re-posts the notification as DoNotNotify's own.
+ * @param proxySilent only meaningful when [shouldProxy] is true: the re-post must be
+ *   posted silently (no phone sound/vibration).
  * @param matchedRuleIndices indices (into the input list) of every rule that matched
  *   and should have its hitCount incremented.
  */
@@ -210,5 +217,6 @@ data class NotificationDecision(
     val shouldStack: Boolean,
     val matchedStackRule: BlockerRule?,
     val shouldProxy: Boolean,
+    val proxySilent: Boolean,
     val matchedRuleIndices: List<Int>
 )

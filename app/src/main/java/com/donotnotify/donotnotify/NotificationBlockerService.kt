@@ -203,7 +203,8 @@ class NotificationBlockerService : NotificationListenerService() {
                 contentIntent = sbn.notification.contentIntent,
                 sourceVisibility = sbn.notification.visibility,
                 packageName = packageName,
-                appLabel = appLabel
+                appLabel = appLabel,
+                silent = decision.proxySilent
             )
             val largeIcon = appInfoStorage.getAppIcon(packageName)
             val posted = ProxyNotificationManager.post(proxyPoster, entry, largeIcon)

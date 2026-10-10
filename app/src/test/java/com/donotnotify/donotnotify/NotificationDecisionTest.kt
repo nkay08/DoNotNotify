@@ -27,6 +27,14 @@ class NotificationDecisionTest {
             advancedConfig = AdvancedRuleConfig(proxyEnabled = true)
         )
 
+    private fun allowProxySilent(t: String) =
+        BlockerRule(
+            packageName = "p",
+            titleFilter = t,
+            ruleType = RuleType.ALLOWLIST,
+            advancedConfig = AdvancedRuleConfig(proxyEnabled = true, proxySilent = true)
+        )
+
     @Test
     fun `stack only, matching, not ongoing - stacks, not blocked`() {
         val d = RuleMatcher.planNotificationDecision(listOf(stack("News")), "p", "News x", null, false)
@@ -169,5 +177,60 @@ class NotificationDecisionTest {
         )
         val d = RuleMatcher.planNotificationDecision(listOf(rule), "p", "OTP 123", null, false)
         assertFalse(d.shouldProxy)
+    }
+
+    // ---- proxy silent -----------------------------------------------------------
+
+    @Test
+    fun `proxy silent flag applies when proxying`() {
+        val d = RuleMatcher.planNotificationDecision(listOf(allowProxySilent("OTP")), "p", "OTP 123", null, false)
+        assertTrue(d.shouldProxy)
+        assertTrue(d.proxySilent)
+    }
+
+    @Test
+    fun `proxy silent without silent flag is false`() {
+        val d = RuleMatcher.planNotificationDecision(listOf(allowProxy("OTP")), "p", "OTP 123", null, false)
+        assertTrue(d.shouldProxy)
+        assertFalse(d.proxySilent)
+    }
+
+    @Test
+    fun `proxy silent flag without proxy has no effect`() {
+        val rule = BlockerRule(
+            packageName = "p",
+            ruleType = RuleType.ALLOWLIST,
+            advancedConfig = AdvancedRuleConfig(proxySilent = true)
+        )
+        val d = RuleMatcher.planNotificationDecision(listOf(rule), "p", "OTP 123", null, false)
+        assertFalse(d.shouldProxy)
+        assertFalse(d.proxySilent)
+    }
+
+    @Test
+    fun `proxy silent never set when blocked or stacked`() {
+        val blocked = RuleMatcher.planNotificationDecision(
+            listOf(allowProxySilent("OTP"), deny("OTP")), "p", "OTP 123", null, false
+        )
+        assertTrue(blocked.isBlocked)
+        assertFalse(blocked.proxySilent)
+
+        val stacked = RuleMatcher.planNotificationDecision(
+            listOf(allowProxySilent("News"), stack("News")), "p", "News x", null, false
+        )
+        assertTrue(stacked.shouldStack)
+        assertFalse(stacked.proxySilent)
+    }
+
+    @Test
+    fun `proxy silent from another package does not apply`() {
+        val rule = BlockerRule(
+            packageName = "other",
+            ruleType = RuleType.ALLOWLIST,
+            advancedConfig = AdvancedRuleConfig(proxyEnabled = true, proxySilent = true)
+        )
+        val d = RuleMatcher.planNotificationDecision(listOf(rule), "p", "OTP 123", null, false)
+        assertFalse(d.shouldProxy)
+        assertFalse(d.proxySilent)
     }
 }

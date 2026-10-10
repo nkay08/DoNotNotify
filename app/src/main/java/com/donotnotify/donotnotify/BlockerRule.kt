@@ -48,6 +48,12 @@ data class AdvancedRuleConfig(
      */
     val proxyEnabled: Boolean = false,
     /**
+     * Phone-silent proxying (any enabled non-STACK proxy rule for the package with this
+     * on): re-posted notifications are posted with setSilent(true), so the phone neither
+     * sounds nor vibrates while watch-companion apps still forward the content.
+     */
+    val proxySilent: Boolean = false,
+    /**
      * Package-level cooldown opt-in (any enabled non-STACK rule for the package with this
      * on): only the first unblocked notification passes; further notifications from that
      * app are blocked until [cooldownSeconds] have elapsed since the last pass.
