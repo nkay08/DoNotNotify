@@ -30,12 +30,14 @@ DoNotNotify is an Android app that filters and blocks unwanted notifications usi
 2. **RuleMatcher** evaluates each notification against stored **BlockerRule**s
 3. Rules are **DENYLIST** (block matching notifications), **ALLOWLIST** (allow only matching, block rest), or **STACK** (don't block — cancel the source and re-post matching notifications as one native notification group)
 4. Matching supports both simple `CONTAINS` and `REGEX` on title/text fields, with optional time-window scheduling via `AdvancedRuleConfig`. STACK reuses the exact same matching; precedence is: a DENYLIST/allowlist-gating block wins over STACK; ongoing notifications are never stacked
+5. DENYLIST/ALLOWLIST rules can enable **notification proxying** (`AdvancedRuleConfig.proxyEnabled`): notifications from that app which survive blocking are canceled and re-posted by DoNotNotify with the same title/text, so watch-companion apps (e.g. Garmin Connect) can be pointed at DoNotNotify. Package-level: any enabled non-STACK rule for the package opts it in; precedence is block > stack > proxy; ongoing notifications are never proxied
 
 ### Key Source Files
 
 - `NotificationBlockerService.kt` — Service that receives and processes all notifications. Holds a self-package reentrancy guard (our own re-posted stack notifications must not re-enter processing) and the `StackPoster` wiring
-- `RuleMatcher.kt` — Rule evaluation logic. `matches()` (time/regex/contains) and the pure `planNotificationDecision()` → `NotificationDecision` (block/stack precedence, first-match-wins, hitCount indices) extracted so the precedence matrix is JVM-testable
+- `RuleMatcher.kt` — Rule evaluation logic. `matches()` (time/regex/contains) and the pure `planNotificationDecision()` → `NotificationDecision` (block/stack/proxy precedence, first-match-wins, hitCount indices) extracted so the precedence matrix is JVM-testable
 - `StackedNotificationManager.kt` — STACK registry + transactional re-post engine. Pure `planAbsorb()` → `AbsorbPlan`, the `StackPoster` side-effect seam, hex SHA-256 `groupKeyFor()`, eviction caps, privacy redaction, restart reconciliation
+- `ProxyNotificationManager.kt` — PROXY re-post engine (one copy per notification). Pure `planPost()` → `PostPlan`, the `ProxyPoster` side-effect seam, shared `proxy_notifications` channel, visibility redaction, source contentIntent with launch-intent fallback
 - `BlockerRule.kt` — Data models: `BlockerRule`, `AdvancedRuleConfig`, `MatchType`, `RuleType` (`DENYLIST`/`ALLOWLIST`/`STACK`)
 - `SimpleNotification.kt` — Notification data model with Parcelable support
 - `MainActivity.kt` — Compose entry point with tabbed UI (History, Rules, Blocked)

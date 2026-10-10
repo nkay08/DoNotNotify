@@ -141,10 +141,17 @@ object RuleMatcher {
         var matchedDenylistRule: BlockerRule? = null
         var matchesStack = false
         var matchedStackRule: BlockerRule? = null
+        var anyProxyRule = false
         val matchedRuleIndices = mutableListOf<Int>()
 
         for ((index, rule) in rules.withIndex()) {
             if (rule.packageName != packageName || !rule.isEnabled) continue
+            // Package-level proxy: any enabled non-STACK rule for the package can opt the
+            // whole package in. STACK is excluded so a proxy flag on a stacked rule can
+            // never fire after the STACK branch already re-posted the notification.
+            if (rule.ruleType != RuleType.STACK && rule.advancedConfig?.proxyEnabled == true) {
+                anyProxyRule = true
+            }
             when (rule.ruleType) {
                 RuleType.ALLOWLIST -> {
                     hasAllowlistRules = true
@@ -172,12 +179,14 @@ object RuleMatcher {
 
         val isBlocked = (hasAllowlistRules && !matchesAllowlist) || matchesDenylist
         val shouldStack = !isBlocked && matchesStack && !wasOngoing
+        val shouldProxy = !isBlocked && !shouldStack && anyProxyRule && !wasOngoing
         return NotificationDecision(
             isBlocked = isBlocked,
             matchedDenylistRule = if (matchesDenylist) matchedDenylistRule else null,
             shouldStack = shouldStack,
             // Only meaningful when the notification will actually be stacked.
             matchedStackRule = if (shouldStack) matchedStackRule else null,
+            shouldProxy = shouldProxy,
             matchedRuleIndices = matchedRuleIndices
         )
     }
@@ -189,6 +198,9 @@ object RuleMatcher {
  * @param matchedDenylistRule the first matched DENYLIST rule, or null.
  * @param matchedStackRule the first matched STACK rule (only meaningful when
  *   [shouldStack] is true), or null.
+ * @param shouldProxy true when the notification survives blocking and stacking and any
+ *   enabled non-STACK rule for the package has the proxy flag: the service then cancels
+ *   the source and re-posts the notification as DoNotNotify's own.
  * @param matchedRuleIndices indices (into the input list) of every rule that matched
  *   and should have its hitCount incremented.
  */
@@ -197,5 +209,6 @@ data class NotificationDecision(
     val matchedDenylistRule: BlockerRule?,
     val shouldStack: Boolean,
     val matchedStackRule: BlockerRule?,
+    val shouldProxy: Boolean,
     val matchedRuleIndices: List<Int>
 )

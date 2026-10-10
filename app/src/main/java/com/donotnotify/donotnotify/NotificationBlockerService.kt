@@ -66,6 +66,10 @@ class NotificationBlockerService : NotificationListenerService() {
         )
     }
 
+    private val proxyPoster: ProxyNotificationManager.ProxyPoster by lazy {
+        ProxyNotificationManager.AndroidProxyPoster(context = this)
+    }
+
     override fun onCreate() {
         super.onCreate()
         ruleStorage = RuleStorage(this)
@@ -152,6 +156,28 @@ class NotificationBlockerService : NotificationListenerService() {
             }
             Log.i(TAG, "Blocking notification from $packageName")
             cancelNotification(sbn.key)
+        } else if (decision.shouldProxy) {
+            // PROXY: re-post a copy as our own notification FIRST; only cancel the source if
+            // the re-post succeeded (post-then-cancel — never lose a notification). The watch
+            // companion is pointed at DoNotNotify instead of the source app, so the content
+            // filtering we do here is what actually reaches the watch.
+            val entry = ProxyNotificationManager.Entry(
+                title = title,
+                text = text,
+                contentIntent = sbn.notification.contentIntent,
+                sourceVisibility = sbn.notification.visibility,
+                packageName = packageName,
+                appLabel = appLabel
+            )
+            val largeIcon = appInfoStorage.getAppIcon(packageName)
+            val posted = ProxyNotificationManager.post(proxyPoster, entry, largeIcon)
+            if (posted) {
+                cancelNotification(sbn.key)
+            } else {
+                Log.w(TAG, "Proxy post failed/blocked; leaving source intact: $packageName")
+            }
+            // Proxied notifications are NOT "blocked": they fall through to the
+            // normal-history branch below.
         } else if (decision.shouldStack) {
             // STACK: post the replacement FIRST; only cancel the source if the
             // re-post succeeded (post-then-cancel — never lose a notification).
