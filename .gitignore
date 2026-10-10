@@ -33,6 +33,9 @@ keystore.properties
 # Signed build outputs (mapping.txt is ~40MB)
 /app/release/
 
+# Podman build cache (Android SDK, Gradle cache, APK copies)
+/.build/
+
 # fastlane / Play publishing
 /fastlane/report.xml
 /fastlane/Preview.html
