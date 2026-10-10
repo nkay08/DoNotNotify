@@ -153,22 +153,34 @@ class NotificationBlockerService : NotificationListenerService() {
 
         // Cooldown: evaluated only for notifications that survived the rules AND are not being
         // stacked (grouping already handles chatty apps) and are not ongoing (cancel is
-        // unreliable there). A suppression blocks like a rule; a pass records the timestamp
-        // so the window restarts. Blocked notifications never touch cooldown state.
-        val cooldownSeconds = CooldownManager.cooldownSecondsFor(rules, packageName)
-        val cooldownBlocked = if (cooldownSeconds != null && !isBlocked && !decision.shouldStack && !wasOngoing) {
-            val lastPass = cooldownStorage.lastPassAt(packageName)
-            val suppress = CooldownManager.shouldSuppress(lastPass, cooldownSeconds, currentTime)
+        // unreliable there). A suppression blocks like a rule; a pass records the timestamp of
+        // every active window so each restarts. Blocked notifications never touch cooldown state.
+        val matchedRulesList = matchedRuleIndices.map { rules[it] }
+        val cooldownWindows = if (!isBlocked && !decision.shouldStack && !wasOngoing) {
+            CooldownManager.windowsFor(rules, packageName, matchedRulesList)
+        } else {
+            emptyList()
+        }
+        val cooldownBlocked = if (cooldownWindows.isEmpty()) {
+            false
+        } else {
+            val suppress = cooldownWindows.any { window ->
+                CooldownManager.shouldSuppress(
+                    cooldownStorage.lastPassAt(window.key),
+                    window.seconds,
+                    currentTime
+                )
+            }
             if (!suppress) {
-                cooldownStorage.recordPass(packageName, currentTime)
+                cooldownWindows.forEach { window ->
+                    cooldownStorage.recordPass(window.key, currentTime)
+                }
             }
             suppress
-        } else {
-            false
         }
 
         if (cooldownBlocked) {
-            Log.i(TAG, "Cooldown blocking notification from $packageName (${cooldownSeconds}s window)")
+            Log.i(TAG, "Cooldown blocking notification from $packageName (${cooldownWindows.joinToString { it.key }})")
         }
 
         if (isBlocked || cooldownBlocked) {

@@ -193,10 +193,14 @@
     <string name="enable_proxy">Notification Proxy</string>
     <string name="proxy_description">Re-post notifications from this app that are not blocked as DoNotNotify\'s own, with the same title and text. Point your watch companion app (e.g. Garmin Connect) at DoNotNotify instead of this app to control exactly what reaches the watch.</string>
     <string name="enable_cooldown">Cooldown</string>
-    <string name="cooldown_description">Only the first unblocked notification passes; further notifications from this app are blocked until the cooldown ends.</string>
+    <string name="cooldown_description">Only the first unblocked notification passes; further notifications are blocked until the cooldown ends.</string>
     <string name="cooldown_value_label">Cooldown length</string>
     <string name="cooldown_seconds">Seconds</string>
     <string name="cooldown_minutes">Minutes</string>
+    <string name="cooldown_scope_rule">Matching notifications</string>
+    <string name="cooldown_scope_package">Whole app</string>
+    <string name="cooldown_scope_rule_desc">Only notifications matching this rule trigger and are throttled by the cooldown. Everything else from this app is unaffected.</string>
+    <string name="cooldown_scope_package_desc">The cooldown throttles every notification from this app that is not blocked by a rule.</string>
     <string name="start_time">Start Time:</string>
     <string name="end_time">End Time:</string>
     <string name="title_filter_optional">Title Filter (Optional)</string>
