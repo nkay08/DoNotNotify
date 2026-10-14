@@ -35,6 +35,14 @@ class NotificationDecisionTest {
             advancedConfig = AdvancedRuleConfig(proxyEnabled = true, proxySilent = true)
         )
 
+    private fun allowDismiss(t: String, seconds: Int = 60) =
+        BlockerRule(
+            packageName = "p",
+            titleFilter = t,
+            ruleType = RuleType.ALLOWLIST,
+            advancedConfig = AdvancedRuleConfig(dismissEnabled = true, dismissSeconds = seconds)
+        )
+
     @Test
     fun `stack only, matching, not ongoing - stacks, not blocked`() {
         val d = RuleMatcher.planNotificationDecision(listOf(stack("News")), "p", "News x", null, false)
@@ -232,5 +240,73 @@ class NotificationDecisionTest {
         val d = RuleMatcher.planNotificationDecision(listOf(rule), "p", "OTP 123", null, false)
         assertFalse(d.shouldProxy)
         assertFalse(d.proxySilent)
+    }
+
+    // ---- auto-dismiss ------------------------------------------------------------
+
+    @Test
+    fun `matched dismiss rule yields dismiss seconds`() {
+        val d = RuleMatcher.planNotificationDecision(listOf(allowDismiss("OTP", 90)), "p", "OTP 123", null, false)
+        assertEquals(90, d.dismissSeconds)
+    }
+
+    @Test
+    fun `dismiss flag off - no dismiss`() {
+        val d = RuleMatcher.planNotificationDecision(listOf(allow("OTP")), "p", "OTP 123", null, false)
+        assertNull(d.dismissSeconds)
+    }
+
+    @Test
+    fun `earliest dismiss wins across matched rules`() {
+        val rules = listOf(allowDismiss("OTP", 300), allowDismiss("OTP", 15))
+        val d = RuleMatcher.planNotificationDecision(rules, "p", "OTP 123", null, false)
+        assertEquals(15, d.dismissSeconds)
+    }
+
+    @Test
+    fun `non-matching dismiss rule does not apply`() {
+        val d = RuleMatcher.planNotificationDecision(listOf(allowDismiss("OTP")), "p", "Other", null, false)
+        assertNull(d.dismissSeconds)
+    }
+
+    @Test
+    fun `blocked notification never dismisses by timer`() {
+        val rules = listOf(allowDismiss("OTP"), deny("OTP"))
+        val d = RuleMatcher.planNotificationDecision(rules, "p", "OTP 123", null, false)
+        assertTrue(d.isBlocked)
+        assertNull(d.dismissSeconds)
+    }
+
+    @Test
+    fun `stacked notification never dismisses by timer`() {
+        val rules = listOf(allowDismiss("News"), stack("News"))
+        val d = RuleMatcher.planNotificationDecision(rules, "p", "News x", null, false)
+        assertTrue(d.shouldStack)
+        assertNull(d.dismissSeconds)
+    }
+
+    @Test
+    fun `dismiss applies to proxied and ongoing notifications`() {
+        val proxied = RuleMatcher.planNotificationDecision(
+            listOf(allowDismiss("OTP", 60).copy(advancedConfig = AdvancedRuleConfig(
+                dismissEnabled = true, dismissSeconds = 60, proxyEnabled = true))),
+            "p", "OTP 123", null, false
+        )
+        assertTrue(proxied.shouldProxy)
+        assertEquals(60, proxied.dismissSeconds)
+
+        val ongoing = RuleMatcher.planNotificationDecision(listOf(allowDismiss("OTP", 60)), "p", "OTP 123", null, true)
+        assertEquals(60, ongoing.dismissSeconds)
+    }
+
+    @Test
+    fun `dismiss from another package does not apply`() {
+        val rule = BlockerRule(
+            packageName = "other",
+            ruleType = RuleType.ALLOWLIST,
+            advancedConfig = AdvancedRuleConfig(dismissEnabled = true, dismissSeconds = 30)
+        )
+        val d = RuleMatcher.planNotificationDecision(listOf(rule), "p", "OTP 123", null, false)
+        assertNull(d.dismissSeconds)
     }
 }

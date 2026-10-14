@@ -143,6 +143,7 @@ object RuleMatcher {
         var matchedStackRule: BlockerRule? = null
         var anyProxyRule = false
         var anyProxySilent = false
+        var matchedDismissSeconds: Int? = null
         val matchedRuleIndices = mutableListOf<Int>()
 
         for ((index, rule) in rules.withIndex()) {
@@ -159,9 +160,20 @@ object RuleMatcher {
             when (rule.ruleType) {
                 RuleType.ALLOWLIST -> {
                     hasAllowlistRules = true
-                    if (!matchesAllowlist && matches(rule, packageName, title, text)) {
-                        matchesAllowlist = true
-                        matchedRuleIndices.add(index)
+                    if (matches(rule, packageName, title, text)) {
+                        if (!matchesAllowlist) {
+                            matchesAllowlist = true
+                            matchedRuleIndices.add(index)
+                        }
+                        // Auto-dismiss is tracked from EVERY matching allowlist rule, not
+                        // just the first (first-match-wins only concerns gating); the
+                        // earliest dismiss duration wins.
+                        val cfg = rule.advancedConfig
+                        if (cfg?.dismissEnabled == true) {
+                            cfg.dismissSeconds.takeIf { it > 0 }?.let { seconds ->
+                                matchedDismissSeconds = minOf(matchedDismissSeconds ?: seconds, seconds)
+                            }
+                        }
                     }
                 }
                 RuleType.DENYLIST -> {
@@ -184,6 +196,9 @@ object RuleMatcher {
         val isBlocked = (hasAllowlistRules && !matchesAllowlist) || matchesDenylist
         val shouldStack = !isBlocked && matchesStack && !wasOngoing
         val shouldProxy = !isBlocked && !shouldStack && anyProxyRule && !wasOngoing
+        // Earliest dismissal wins across matched dismiss rules; meaningless for blocked
+        // (already canceled) and stacked (grouped) notifications.
+        val dismissSeconds = if (!isBlocked && !shouldStack) matchedDismissSeconds else null
         return NotificationDecision(
             isBlocked = isBlocked,
             matchedDenylistRule = if (matchesDenylist) matchedDenylistRule else null,
@@ -192,6 +207,7 @@ object RuleMatcher {
             matchedStackRule = if (shouldStack) matchedStackRule else null,
             shouldProxy = shouldProxy,
             proxySilent = shouldProxy && anyProxySilent,
+            dismissSeconds = dismissSeconds,
             matchedRuleIndices = matchedRuleIndices
         )
     }
@@ -208,6 +224,9 @@ object RuleMatcher {
  *   the source and re-posts the notification as DoNotNotify's own.
  * @param proxySilent only meaningful when [shouldProxy] is true: the re-post must be
  *   posted silently (no phone sound/vibration).
+ * @param dismissSeconds null unless the notification survives blocking and stacking and at
+ *   least one matched rule enables auto-dismiss: the delay after which the notification
+ *   (normal or proxied) is dismissed. Earliest matched duration wins.
  * @param matchedRuleIndices indices (into the input list) of every rule that matched
  *   and should have its hitCount incremented.
  */
@@ -218,5 +237,6 @@ data class NotificationDecision(
     val matchedStackRule: BlockerRule?,
     val shouldProxy: Boolean,
     val proxySilent: Boolean,
+    val dismissSeconds: Int?,
     val matchedRuleIndices: List<Int>
 )

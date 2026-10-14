@@ -108,6 +108,8 @@ fun AdvancedRuleConfigDialog(
     showCooldown: Boolean,
     /** True for ALLOWLIST rules: shows the cooldown scope selector (RULE / PACKAGE). */
     showCooldownScope: Boolean,
+    /** True for ALLOWLIST rules: shows the auto-dismiss toggle and duration fields. */
+    showDismiss: Boolean,
     /** Non-null (a channel id) shows the "Sound & vibration" deep-link for that channel. */
     soundChannelId: String?,
     onDismiss: () -> Unit,
@@ -117,7 +119,9 @@ fun AdvancedRuleConfigDialog(
     var isEnabled by remember { mutableStateOf(initialIsEnabled) }
     var ruleName by remember { mutableStateOf(initialName) }
     var cooldownInput by remember { mutableStateOf(initialConfig.cooldownSeconds.toString()) }
-    var cooldownUnit by remember { mutableStateOf(CooldownUnit.SECONDS) }
+    var cooldownUnit by remember { mutableStateOf(DurationUnit.SECONDS) }
+    var dismissInput by remember { mutableStateOf(initialConfig.dismissSeconds.toString()) }
+    var dismissUnit by remember { mutableStateOf(DurationUnit.SECONDS) }
     val scrollState = rememberScrollState()
     val context = LocalContext.current
 
@@ -270,21 +274,79 @@ fun AdvancedRuleConfigDialog(
                                     .fillMaxWidth()
                                     .padding(top = 8.dp)
                             ) {
-                                CooldownUnit.entries.forEachIndexed { index, unit ->
+                                DurationUnit.entries.forEachIndexed { index, unit ->
                                     SegmentedButton(
                                         selected = cooldownUnit == unit,
                                         onClick = {
                                             // Convert the typed value across units so "30"
                                             // typed as seconds becomes "0.5 min"-safe: keep it
                                             // lossless in seconds and re-render for the new unit.
-                                            val seconds = parseCooldownInput(cooldownInput, cooldownUnit)
+                                            val seconds = parseDurationInput(cooldownInput, cooldownUnit)
                                             cooldownUnit = unit
-                                            cooldownInput = displayCooldown(seconds, unit)
+                                            cooldownInput = displayDuration(seconds, unit)
                                         },
                                         modifier = Modifier.weight(1f),
                                         shape = SegmentedButtonDefaults.itemShape(
                                             index = index,
-                                            count = CooldownUnit.entries.size
+                                            count = DurationUnit.entries.size
+                                        ),
+                                    ) {
+                                        Text(
+                                            text = stringResource(unit.labelRes),
+                                            maxLines = 1,
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (showDismiss) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
+                    ToggleRow(
+                        checked = config.dismissEnabled,
+                        label = stringResource(R.string.enable_dismiss),
+                        onToggle = { config = config.copy(dismissEnabled = it) }
+                    )
+                    Text(
+                        text = stringResource(R.string.dismiss_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 40.dp, end = 8.dp, bottom = 4.dp)
+                    )
+
+                    if (config.dismissEnabled) {
+                        Column(modifier = Modifier.padding(start = 40.dp, top = 4.dp)) {
+                            TextField(
+                                value = dismissInput,
+                                onValueChange = { value ->
+                                    dismissInput = value.filter { it.isDigit() }.take(5)
+                                },
+                                label = { Text(stringResource(R.string.dismiss_value_label)) },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            SingleChoiceSegmentedButtonRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp)
+                            ) {
+                                DurationUnit.entries.forEachIndexed { index, unit ->
+                                    SegmentedButton(
+                                        selected = dismissUnit == unit,
+                                        onClick = {
+                                            val seconds = parseDurationInput(dismissInput, dismissUnit)
+                                            dismissUnit = unit
+                                            dismissInput = displayDuration(seconds, unit)
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        shape = SegmentedButtonDefaults.itemShape(
+                                            index = index,
+                                            count = DurationUnit.entries.size
                                         ),
                                     ) {
                                         Text(
@@ -387,7 +449,10 @@ fun AdvancedRuleConfigDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(onClick = {
                         onSave(
-                            config.copy(cooldownSeconds = parseCooldownInput(cooldownInput, cooldownUnit)),
+                            config.copy(
+                                cooldownSeconds = parseDurationInput(cooldownInput, cooldownUnit),
+                                dismissSeconds = parseDurationInput(dismissInput, dismissUnit)
+                            ),
                             isEnabled,
                             ruleName
                         )
@@ -420,8 +485,8 @@ private fun ToggleRow(
     }
 }
 
-/** Unit selector for the cooldown duration; the stored value is always seconds. */
-private enum class CooldownUnit(val labelRes: Int) {
+/** Unit selector for cooldown/dismiss durations; the stored value is always seconds. */
+private enum class DurationUnit(val labelRes: Int) {
     SECONDS(R.string.cooldown_seconds),
     MINUTES(R.string.cooldown_minutes)
 }
@@ -436,15 +501,15 @@ private enum class CooldownScopeOption(
 }
 
 /** Parse the typed input into seconds, clamped to 1 s … 24 h. Empty/garbage reads as 0 → 1. */
-private fun parseCooldownInput(input: String, unit: CooldownUnit): Int {
+private fun parseDurationInput(input: String, unit: DurationUnit): Int {
     val value = input.toIntOrNull() ?: 0
-    val seconds = if (unit == CooldownUnit.MINUTES) value * 60 else value
+    val seconds = if (unit == DurationUnit.MINUTES) value * 60 else value
     return seconds.coerceIn(1, CooldownManager.MAX_SECONDS)
 }
 
 /** Render stored seconds in the selected unit (minutes are floored, minimum 1). */
-private fun displayCooldown(seconds: Int, unit: CooldownUnit): String =
-    if (unit == CooldownUnit.MINUTES) ((seconds / 60).coerceAtLeast(1)).toString() else seconds.toString()
+private fun displayDuration(seconds: Int, unit: DurationUnit): String =
+    if (unit == DurationUnit.MINUTES) ((seconds / 60).coerceAtLeast(1)).toString() else seconds.toString()
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -491,6 +556,7 @@ private fun RuleDialog(
             showProxy = ruleType != RuleType.STACK,
             showCooldown = ruleType != RuleType.STACK,
             showCooldownScope = ruleType == RuleType.ALLOWLIST,
+            showDismiss = ruleType == RuleType.ALLOWLIST,
             // The channel exists only after the rule is saved, so the deep-link is edit-mode only.
             soundChannelId = if (isEditMode && ruleType == RuleType.STACK &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O

@@ -69,6 +69,7 @@ DoNotNotify/
 │       │   │   ├── ProxyNotificationManager.kt        # PROXY re-post engine (one copy per notification)
 │       │   │   ├── CooldownManager.kt                 # Pure cooldown planning (package-level opt-in)
 │       │   │   ├── CooldownStorage.kt                 # Last-pass timestamps (SharedPreferences)
+│       │   │   ├── DismissScheduler.kt                # Auto-dismiss timers (main looper)
 │       │   │   ├── BlockerRule.kt                     # Data models (rule, enums, config)
 │       │   │   ├── SimpleNotification.kt              # Notification data model
 │       │   │   ├── RuleStorage.kt                     # Rule persistence (JSON file)
@@ -199,7 +200,9 @@ data class AdvancedRuleConfig(
     val proxyEnabled: Boolean = false,     // Re-post allowed notifications as DoNotNotify's own
     val cooldownEnabled: Boolean = false,  // Throttle: block all but the first pass in each window
     val cooldownSeconds: Int = 300,        // Cooldown window; seconds is the single stored unit
-    val cooldownScope: CooldownScope = CooldownScope.RULE // RULE = matching only, PACKAGE = whole app
+    val cooldownScope: CooldownScope = CooldownScope.RULE, // RULE = matching only, PACKAGE = whole app
+    val dismissEnabled: Boolean = false,   // Auto-dismiss matching notifications after a delay
+    val dismissSeconds: Int = 60           // Dismiss delay; seconds is the single stored unit
 ) : Parcelable
 ```
 
@@ -274,13 +277,17 @@ Notification received (StatusBarNotification)
     ├── If blocked (rule block or cooldown-block): cancelNotification(sbn.key)
     │   └── Logs warning if notification has FLAG_ONGOING_EVENT (rule blocks only)
     │
-    ├── Else if shouldProxy: ProxyNotificationManager.post(...)
+    ├── Else if shouldProxy: ProxyNotificationManager.planPost/post(...)
     │   └── Post-then-cancel — cancelNotification(sbn.key) ONLY if the re-post succeeded
     │       (proxied items are NOT "blocked": they fall through to normal history)
+    │   └── Auto-dismiss (dismissSeconds): timer cancels our own re-posted id via the poster seam
     │
     ├── Else if shouldStack: StackedNotificationManager.absorbAndPost(...)
     │   └── Post-then-cancel — cancelNotification(sbn.key) ONLY if the re-post succeeded
     │       (stacked items are NOT "blocked": they fall through to normal history)
+    │
+    ├── Auto-dismiss for normal pass-through (not blocked/cooldown-blocked/proxied/stacked):
+    │   └── DismissScheduler.schedule(sbn.key, dismissSeconds * 1000) → cancelNotification(key)
     │
     ├── Debounce check (5-second window per notification key)
     │   └── key = "$packageName:$title:$text"
@@ -382,6 +389,15 @@ Implements notification throttling: notifications inside an active window are bl
 - **Placement** — evaluated only when `!isBlocked && !shouldStack && !wasOngoing`, so precedence is block > stack > cooldown > proxy; blocked notifications never touch cooldown state, stacked/ongoing ones are exempt
 - **State** — `CooldownStorage` keeps one `last_pass_<windowKey>` long per window (`package:<pkg>` or `rule:<ruleId>`) in SharedPreferences; survives process restarts so a kill cannot re-open the floodgates mid-burst. Windows are recorded only when the notification passes, so a suppressed notification never restarts a window
 - **Window** — measured from the last pass time; `now - lastPass >= window` passes, so the boundary itself lets the next notification through
+
+### `DismissScheduler` (`DismissScheduler.kt`)
+
+**Type:** In-memory main-looper timer registry for the auto-dismiss feature.
+
+- `schedule(key, delayMs, action)` — posts a delayed action on the main looper, replacing any pending entry for the key; `cancel(key)` drops it
+- The service schedules a `cancelNotification(sbn.key)` for normal pass-through notifications and a poster-seam `cancel(id)` for proxied re-posts, both after `dismissSeconds` (earliest matched rule wins; blocked/stacked/cooldown-blocked are excluded)
+- `onNotificationRemoved` for our own package drops the pending timer for that id — an already-dismissed notification has nothing left to cancel
+- **Limitation:** timers live in the listener process; a process death drops pending dismissals. Acceptable for short seconds/minutes delays
 
 ---
 
@@ -784,11 +800,11 @@ Covers `RuleMatcher.shouldBlock()` / `matches()`: no rules; denylist match/no-ma
 
 #### `NotificationDecisionTest` (`NotificationDecisionTest.kt`)
 
-Full precedence matrix for `planNotificationDecision`: stack-only matching/non-matching, denylist-wins-over-stack, allowlist-gating-wins, first-enabled-stack-match-wins, ongoing exclusion, other-package no-op, disabled stack rule; plus the proxy matrix: proxy only when not blocked/stacked/ongoing, block wins, stack wins, package-level flag, STACK-rule flag never fires, disabled/other-package flags ignored.
+Full precedence matrix for `planNotificationDecision`: stack-only matching/non-matching, denylist-wins-over-stack, allowlist-gating-wins, first-enabled-stack-match-wins, ongoing exclusion, other-package no-op, disabled stack rule; plus the proxy matrix: proxy only when not blocked/stacked/ongoing, block wins, stack wins, package-level flag, STACK-rule flag never fires, disabled/other-package flags ignored; proxy-silent matrix; and the dismiss matrix: matched rule yields seconds, earliest wins, non-matching/blocked/stacked → null, applies to proxied and ongoing, other-package ignored.
 
 #### `ProxyNotificationManagerTest` (`ProxyNotificationManagerTest.kt`)
 
-Pure `planPost` (title fallback, visibility normalization/redaction, reserved ID range) and the `ProxyPoster` seam: success forwards plan/entry, refusal and thrown exceptions return false.
+Pure `planPost` (title fallback, visibility normalization/redaction, reserved ID range) and the `ProxyPoster` seam: success forwards plan/entry, refusal and thrown exceptions return false, pre-planned posts use the caller-provided id, silent flag forwarding, cancel delegation.
 
 #### `CooldownManagerTest` (`CooldownManagerTest.kt`)
 

@@ -82,8 +82,14 @@ object ProxyNotificationManager {
      * the poster refused (notifications disabled) or threw — the caller then leaves the
      * source notification untouched.
      */
-    fun post(poster: ProxyPoster, entry: Entry, largeIcon: Bitmap?): Boolean {
-        val plan = planPost(entry)
+    fun post(poster: ProxyPoster, entry: Entry, largeIcon: Bitmap?): Boolean =
+        post(poster, planPost(entry), entry, largeIcon)
+
+    /**
+     * Post with a pre-planned [PostPlan], so the caller knows the notification id in advance
+     * (e.g. to schedule a later cancel). Returns true when the copy is posted.
+     */
+    fun post(poster: ProxyPoster, plan: PostPlan, entry: Entry, largeIcon: Bitmap?): Boolean {
         return try {
             poster.post(plan, entry, largeIcon)
         } catch (e: Exception) {
@@ -96,6 +102,9 @@ object ProxyNotificationManager {
     interface ProxyPoster {
         /** Post the plan; return false when nothing was posted (e.g. notifications disabled). */
         fun post(plan: PostPlan, entry: Entry, largeIcon: Bitmap?): Boolean
+
+        /** Cancel a previously posted proxy notification by its id. */
+        fun cancel(id: Int)
     }
 
     class AndroidProxyPoster(private val context: Context) : ProxyPoster {
@@ -152,6 +161,10 @@ object ProxyNotificationManager {
             }
             nmc.notify(plan.notificationId, builder.build())
             return true
+        }
+
+        override fun cancel(id: Int) {
+            nmc.cancel(id)
         }
 
         /** Lock-screen-safe public version: the app label only, never the source title/body. */

@@ -71,6 +71,8 @@ class NotificationBlockerService : NotificationListenerService() {
         ProxyNotificationManager.AndroidProxyPoster(context = this)
     }
 
+    private val dismissScheduler = DismissScheduler()
+
     override fun onCreate() {
         super.onCreate()
         ruleStorage = RuleStorage(this)
@@ -207,9 +209,17 @@ class NotificationBlockerService : NotificationListenerService() {
                 silent = decision.proxySilent
             )
             val largeIcon = appInfoStorage.getAppIcon(packageName)
-            val posted = ProxyNotificationManager.post(proxyPoster, entry, largeIcon)
+            val plan = ProxyNotificationManager.planPost(entry)
+            val posted = ProxyNotificationManager.post(proxyPoster, plan, entry, largeIcon)
             if (posted) {
                 cancelNotification(sbn.key)
+                // Auto-dismiss applies to the re-post: cancel our own notification id
+                // after the configured delay.
+                decision.dismissSeconds?.let { seconds ->
+                    dismissScheduler.schedule("proxy:${plan.notificationId}", seconds * 1000L) {
+                        proxyPoster.cancel(plan.notificationId)
+                    }
+                }
             } else {
                 Log.w(TAG, "Proxy post failed/blocked; leaving source intact: $packageName")
             }
@@ -246,6 +256,17 @@ class NotificationBlockerService : NotificationListenerService() {
             }
             // Stacked notifications are NOT "blocked": they fall through to the
             // normal-history branch below (blocked count is not incremented).
+        }
+
+        // Auto-dismiss for normal pass-through notifications (the proxy branch schedules
+        // its own timer against the re-posted id above). Blocked/cooldown-blocked/stacked
+        // are excluded: blocked ones are already canceled and stacked ones live in a group.
+        decision.dismissSeconds?.let { seconds ->
+            if (!isBlocked && !cooldownBlocked && !decision.shouldProxy && !decision.shouldStack) {
+                dismissScheduler.schedule(sbn.key, seconds * 1000L) {
+                    cancelNotification(sbn.key)
+                }
+            }
         }
 
         // Carry the matched rule *ids*, not a whole-list snapshot: storage re-reads current
@@ -332,6 +353,9 @@ class NotificationBlockerService : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         super.onNotificationRemoved(sbn)
         if (sbn == null || sbn.packageName != BuildConfig.APPLICATION_ID) return
+        // One of our own proxy notifications went away (dismissed or canceled): drop its
+        // pending auto-dismiss timer — it has nothing left to cancel.
+        dismissScheduler.cancel("proxy:${sbn.id}")
         // One of our own stack notifications was dismissed — keep the registry in sync.
         try {
             StackedNotificationManager.onOurNotificationRemoved(

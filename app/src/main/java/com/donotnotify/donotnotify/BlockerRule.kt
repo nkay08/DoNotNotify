@@ -62,7 +62,11 @@ data class AdvancedRuleConfig(
     /** Cooldown window length. Seconds is the single stored unit (UI converts minutes). */
     val cooldownSeconds: Int = 300,
     /** PACKAGE = throttle the whole app; RULE = throttle only notifications matching the rule. */
-    val cooldownScope: CooldownScope = CooldownScope.RULE
+    val cooldownScope: CooldownScope = CooldownScope.RULE,
+    /** Auto-dismiss matching notifications after [dismissSeconds] (normal and proxied). */
+    val dismissEnabled: Boolean = false,
+    /** Dismiss delay. Seconds is the single stored unit (UI converts minutes). */
+    val dismissSeconds: Int = 60
 ) : Parcelable
 
 @Keep

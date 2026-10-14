@@ -16,6 +16,7 @@ class ProxyNotificationManagerTest {
     ) : ProxyNotificationManager.ProxyPoster {
         var lastPlan: ProxyNotificationManager.PostPlan? = null
         var lastEntry: ProxyNotificationManager.Entry? = null
+        val canceledIds = mutableListOf<Int>()
 
         override fun post(
             plan: ProxyNotificationManager.PostPlan,
@@ -26,6 +27,10 @@ class ProxyNotificationManagerTest {
             lastPlan = plan
             lastEntry = entry
             return result
+        }
+
+        override fun cancel(id: Int) {
+            canceledIds.add(id)
         }
     }
 
@@ -132,5 +137,25 @@ class ProxyNotificationManagerTest {
         assertEquals(true, poster.lastEntry?.silent)
         ProxyNotificationManager.post(poster, entry(), null)
         assertEquals(false, poster.lastEntry?.silent)
+    }
+
+    @Test
+    fun `pre-planned post uses the caller-provided id`() {
+        val poster = FakePoster()
+        val plan = ProxyNotificationManager.PostPlan(
+            notificationId = 777,
+            title = "Planned",
+            visibility = Notification.VISIBILITY_PRIVATE,
+            redactPublic = true
+        )
+        assertTrue(ProxyNotificationManager.post(poster, plan, entry(), null))
+        assertEquals(777, poster.lastPlan?.notificationId)
+    }
+
+    @Test
+    fun `cancel delegates to the poster`() {
+        val poster = FakePoster()
+        poster.cancel(42)
+        assertEquals(listOf(42), poster.canceledIds)
     }
 }

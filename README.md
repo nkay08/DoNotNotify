@@ -9,6 +9,7 @@ An Android app that filters and blocks unwanted notifications using customizable
 - **Notification Stacking** - STACK rules don't block; they collapse chatty apps into a single expandable notification group so you keep the notifications without the clutter
 - **Notification Proxy** - DENYLIST/ALLOWLIST rules can re-post allowed notifications as DoNotNotify's own (same title and text). Point your watch companion app (e.g. Garmin Connect) at DoNotNotify instead of the source app, and your content-based rules control exactly what reaches the watch
 - **Notification Cooldown** - DENYLIST/ALLOWLIST rules can throttle notifications: with RULE scope (default) only notifications matching the rule trigger the cooldown and are then blocked until the window (seconds or minutes) runs out — everything else from the app is unaffected. PACKAGE scope throttles the whole app. Combines with proxying so a watch only gets alerted at the configured interval
+- **Auto-Dismiss** - ALLOWLIST rules can dismiss matching notifications automatically after a configured time (seconds or minutes). Applies to both normal pass-through notifications and proxied re-posts, so stale shade entries remove themselves
 - **Pattern Matching** - Match notification title/text using simple contains or regex patterns
 - **Time-Based Rules** - Schedule rules to activate only during specific time windows
 - **Prebuilt Rules** - 40+ pre-configured rules for popular apps (e-commerce promos, social media, etc.)
